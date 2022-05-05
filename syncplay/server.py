@@ -5,11 +5,15 @@ import os
 import random
 import time
 import json
+from datetime import datetime
 from string import Template
 
 from twisted.enterprise import adbapi
 from twisted.internet import task, reactor
 from twisted.internet.protocol import Factory
+from twisted.internet.task import react
+from twisted.web._newclient import ResponseFailed
+from twisted.web.client import Agent, readBody
 
 try:
     from OpenSSL import crypto
@@ -27,7 +31,7 @@ from syncplay.utils import RoomPasswordProvider, NotControlledRoom, RandomString
 class SyncFactory(Factory):
     def __init__(self, port='', password='', motdFilePath=None, roomsDbFile=None, permanentRoomsFile=None, isolateRooms=False, salt=None,
                  disableReady=False, disableChat=False, maxChatMessageLength=constants.MAX_CHAT_MESSAGE_LENGTH,
-                 maxUsernameLength=constants.MAX_USERNAME_LENGTH, statsDbFile=None, tlsCertPath=None):
+                 maxUsernameLength=constants.MAX_USERNAME_LENGTH, statsDbFile=None, tlsCertPath=None, *, reactor=None):
         self.isolateRooms = isolateRooms
         syncplay.messages.setLanguage(syncplay.messages.getInitialLanguage())
         print(getMessage("welcome-server-notification").format(syncplay.version))
@@ -41,6 +45,16 @@ class SyncFactory(Factory):
             print(getMessage("no-salt-notification").format(salt))
         self._salt = salt
         self._motdFilePath = motdFilePath
+
+        # --- BEGIN QUOTE STUFF ---
+        self._reactor = reactor
+        # TODO: add option to modify this
+        self._quoteOfTheDayAPI = "https://asozial.org/api/zitat-des-tages"  # type: None | str
+        self._quoteOfTheDayCache = {}
+
+        self.getQuoteOfTheDay()  # run this to populate cache in beginning
+        # --- END QUOTE STUFF ---
+
         self.roomsDbFile = roomsDbFile
         self.disableReady = disableReady
         self.disableChat = disableChat
@@ -88,6 +102,37 @@ class SyncFactory(Factory):
             setBy = room.getSetBy()
             watcher.sendState(position, paused, doSeek, setBy, forcedUpdate)
 
+    def getQuoteOfTheDay(self):
+        if not self._quoteOfTheDayAPI:
+            return
+        date = datetime.utcnow().date().timetuple()[:3]
+
+        if date in self._quoteOfTheDayCache:
+            return self._quoteOfTheDayCache[date]
+
+        def gotBody(body):
+            data = json.loads(body.decode("UTF-8"))
+            self._quoteOfTheDayCache.clear()
+            self._quoteOfTheDayCache[date] = (
+                f"{data['quote']}\n- {data['author']}\n\n{data['url']}"
+            )
+            print(self._quoteOfTheDayCache)
+        agent = Agent(self._reactor)
+        requested = agent.request(b"GET", self._quoteOfTheDayAPI.encode("UTF-8"))
+
+        def gotResponse(response):
+            print(response.code, response)
+            readBody(response).addCallback(gotBody)
+
+        def noResponse(failure):
+            failure.trap(ResponseFailed)
+            print(failure.value.reasons[0].getTraceback())
+
+        requested.addCallbacks(gotResponse, noResponse)
+        # as fallback maybe show old quote
+        if self._quoteOfTheDayCache:
+            return tuple(self._quoteOfTheDayCache.values())[0]
+
     def getFeatures(self):
         features = dict()
         features["isolateRooms"] = self.isolateRooms
@@ -107,17 +152,32 @@ class SyncFactory(Factory):
         if constants.WARN_OLD_CLIENTS:
             if not meetsMinVersion(clientVersion, constants.RECENT_CLIENT_THRESHOLD):
                 oldClient = True
-        if self._motdFilePath and os.path.isfile(self._motdFilePath):
+
+        motd = None
+        if self._quoteOfTheDayAPI:
+            motd = self.getQuoteOfTheDay()
+        elif self._motdFilePath and os.path.isfile(self._motdFilePath):
             tmpl = codecs.open(self._motdFilePath, "r", "utf-8-sig").read()
             args = dict(version=syncplay.version, userIp=userIp, username=username, room=room)
             try:
                 motd = Template(tmpl).substitute(args)
-                if oldClient:
-                    motdwarning = getMessage("new-syncplay-available-motd-message").format(clientVersion)
-                    motd = "{}\n{}".format(motdwarning, motd)
-                return motd if len(motd) < constants.SERVER_MAX_TEMPLATE_LENGTH else getMessage("server-messed-up-motd-too-long").format(constants.SERVER_MAX_TEMPLATE_LENGTH, len(motd))
             except ValueError:
                 return getMessage("server-messed-up-motd-unescaped-placeholders")
+
+        if motd:
+            if oldClient:
+                motdwarning = getMessage(
+                    "new-syncplay-available-motd-message"
+                    ).format(clientVersion)
+                motd = "{}\n{}".format(motdwarning, motd)
+            return (
+                motd
+                if len(motd) < constants.SERVER_MAX_TEMPLATE_LENGTH
+                else
+                getMessage("server-messed-up-motd-too-long").format(
+                    constants.SERVER_MAX_TEMPLATE_LENGTH, len(motd)
+                )
+            )
         elif oldClient:
             return getMessage("new-syncplay-available-motd-message").format(clientVersion)
         else:
