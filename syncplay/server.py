@@ -2,7 +2,6 @@ import argparse
 import codecs
 import hashlib
 import os
-import random
 import time
 import json
 from datetime import datetime
@@ -11,7 +10,6 @@ from string import Template
 from twisted.enterprise import adbapi
 from twisted.internet import task, reactor
 from twisted.internet.protocol import Factory
-from twisted.internet.task import react
 from twisted.web._newclient import ResponseFailed
 from twisted.web.client import Agent, readBody
 
