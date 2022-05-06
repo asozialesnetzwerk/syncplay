@@ -34,7 +34,7 @@ class SyncFactory(Factory):
         disableReady=False, disableChat=False,
         maxChatMessageLength=constants.MAX_CHAT_MESSAGE_LENGTH,
         maxUsernameLength=constants.MAX_USERNAME_LENGTH, statsDbFile=None,
-        tlsCertPath=None, quoteOfTheDayAPI=None, *, reactor=None
+        tlsCertPath=None, quoteOfTheDayAPI=None
     ):
         self.isolateRooms = isolateRooms
         syncplay.messages.setLanguage(syncplay.messages.getInitialLanguage())
@@ -51,7 +51,6 @@ class SyncFactory(Factory):
         self._motdFilePath = motdFilePath
 
         # --- BEGIN QUOTE STUFF ---
-        self._reactor = reactor
         self._quoteOfTheDayAPI = quoteOfTheDayAPI  # type: None | str
         self._quoteOfTheDayCache = {}
         self.getQuoteOfTheDay()  # run this to populate cache in beginning
@@ -123,7 +122,7 @@ class SyncFactory(Factory):
                 f"{data['quote']}\n- {data['author']}\n\n{data['url']}"
             )
             print(self._quoteOfTheDayCache)
-        agent = Agent(self._reactor)
+        agent = Agent(reactor)
         requested = agent.request(b"GET", self._quoteOfTheDayAPI.encode("UTF-8"))
 
         def gotResponse(response):
