@@ -27,9 +27,15 @@ from syncplay.protocols import SyncServerProtocol
 from syncplay.utils import RoomPasswordProvider, NotControlledRoom, RandomStringGenerator, meetsMinVersion, playlistIsValid, truncateText, getListAsMultilineString, convertMultilineStringToList
 
 class SyncFactory(Factory):
-    def __init__(self, port='', password='', motdFilePath=None, roomsDbFile=None, permanentRoomsFile=None, isolateRooms=False, salt=None,
-                 disableReady=False, disableChat=False, maxChatMessageLength=constants.MAX_CHAT_MESSAGE_LENGTH,
-                 maxUsernameLength=constants.MAX_USERNAME_LENGTH, statsDbFile=None, tlsCertPath=None, *, reactor=None):
+
+    def __init__(
+        self, port='', password='', motdFilePath=None, roomsDbFile=None,
+        permanentRoomsFile=None, isolateRooms=False, salt=None,
+        disableReady=False, disableChat=False,
+        maxChatMessageLength=constants.MAX_CHAT_MESSAGE_LENGTH,
+        maxUsernameLength=constants.MAX_USERNAME_LENGTH, statsDbFile=None,
+        tlsCertPath=None, quoteOfTheDayAPI=None, *, reactor=None
+    ):
         self.isolateRooms = isolateRooms
         syncplay.messages.setLanguage(syncplay.messages.getInitialLanguage())
         print(getMessage("welcome-server-notification").format(syncplay.version))
@@ -46,10 +52,8 @@ class SyncFactory(Factory):
 
         # --- BEGIN QUOTE STUFF ---
         self._reactor = reactor
-        # TODO: add option to modify this
-        self._quoteOfTheDayAPI = "https://asozial.org/api/zitat-des-tages"  # type: None | str
+        self._quoteOfTheDayAPI = quoteOfTheDayAPI  # type: None | str
         self._quoteOfTheDayCache = {}
-
         self.getQuoteOfTheDay()  # run this to populate cache in beginning
         # --- END QUOTE STUFF ---
 
@@ -105,13 +109,17 @@ class SyncFactory(Factory):
             return
         date = datetime.utcnow().date().timetuple()[:3]
 
-        if date in self._quoteOfTheDayCache:
+        if self._quoteOfTheDayCache.get(date):
             return self._quoteOfTheDayCache[date]
 
         def gotBody(body):
+            if not body:
+                print("Empty body while trying to get quote of the day.")
+                return
             data = json.loads(body.decode("UTF-8"))
+            _date = tuple(int(n) for n in data["date"].split("-"))
             self._quoteOfTheDayCache.clear()
-            self._quoteOfTheDayCache[date] = (
+            self._quoteOfTheDayCache[_date] = (
                 f"{data['quote']}\n- {data['author']}\n\n{data['url']}"
             )
             print(self._quoteOfTheDayCache)
@@ -120,11 +128,18 @@ class SyncFactory(Factory):
 
         def gotResponse(response):
             print(response.code, response)
-            readBody(response).addCallback(gotBody)
+            if response.code == 200:
+                readBody(response).addCallback(gotBody)
+            else:
+                print("Failed to get quote of the day.")
 
         def noResponse(failure):
             failure.trap(ResponseFailed)
-            print(failure.value.reasons[0].getTraceback())
+            print(
+                "Failure while trying to get quote of the day",
+                failure.value.reasons[0].getTraceback(),
+                sep="\n",
+            )
 
         requested.addCallbacks(gotResponse, noResponse)
         # as fallback maybe show old quote
@@ -933,7 +948,8 @@ class ConfigurationGetter(object):
     def _prepareArgParser(self):
         self._argparser = argparse.ArgumentParser(
             description=getMessage("server-argument-description"),
-            epilog=getMessage("server-argument-epilog"))
+            epilog=getMessage("server-argument-epilog")
+        )
         self._argparser.add_argument('--port', metavar='port', type=str, nargs='?', help=getMessage("server-port-argument"))
         self._argparser.add_argument('--password', metavar='password', type=str, nargs='?', help=getMessage("server-password-argument"), default=os.environ.get('SYNCPLAY_PASSWORD'))
         self._argparser.add_argument('--isolate-rooms', action='store_true', help=getMessage("server-isolate-room-argument"))
@@ -947,3 +963,4 @@ class ConfigurationGetter(object):
         self._argparser.add_argument('--max-username-length', metavar='maxUsernameLength', type=int, nargs='?', help=getMessage("server-maxusernamelength-argument").format(constants.MAX_USERNAME_LENGTH))
         self._argparser.add_argument('--stats-db-file', metavar='file', type=str, nargs='?', help=getMessage("server-stats-db-file-argument"))
         self._argparser.add_argument('--tls', metavar='path', type=str, nargs='?', help=getMessage("server-startTLS-argument"))
+        self._argparser.add_argument("--quotes-api-url", metavar="quotesApiUrl", type=str, nargs="?", help="The quote of the day API URL.", default="https://asozial.org/api/zitat-des-tages")

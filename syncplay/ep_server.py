@@ -44,6 +44,7 @@ def main():
         args.max_username_length,
         args.stats_db_file,
         args.tls,
+        args.quotes_api_url,
         reactor=reactor,
     )
     endpoint6 = TCP6ServerEndpoint(reactor, int(args.port))
