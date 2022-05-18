@@ -45,7 +45,6 @@ def main():
         args.stats_db_file,
         args.tls,
         args.quotes_api_url,
-        reactor=reactor,
     )
     endpoint6 = TCP6ServerEndpoint(reactor, int(args.port))
     endpoint6.listen(factory).addCallbacks(isListening6, failed6)
